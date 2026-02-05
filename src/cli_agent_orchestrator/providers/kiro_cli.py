@@ -18,7 +18,13 @@ ESCAPE_SEQUENCE_PATTERN = r"\[[?0-9;]*[a-zA-Z]"
 CONTROL_CHAR_PATTERN = r"[\x00-\x1f\x7f-\x9f]"
 BELL_CHAR = "\x07"
 GENERIC_PROMPT_PATTERN = r"\x1b\[38;5;13m>\s*\x1b\[39m\s*$"
-IDLE_PROMPT_PATTERN_LOG = r"\x1b\[38;5;13m>\s*\x1b\[39m"
+# Pattern for log files - matches prompt with optional greyed-out placeholder text
+# Supports both old (38;5;13) and new (38;5;93) kiro-cli color codes
+# e.g. "[38;5;93m> [38;5;240mHow can I help?[39m" or "[38;5;13m> [39m"
+IDLE_PROMPT_PATTERN_LOG = (
+    r"\x1b\[38;5;(?:13|93)m>\s*\x1b\[39m"  # Without placeholder
+    r"|\x1b\[38;5;(?:13|93)m>\s*\x1b\[38;5;240m[^\x1b]*\x1b\[39m"  # With greyed placeholder
+)
 
 # Error indicators
 ERROR_INDICATORS = ["Kiro is having trouble responding right now"]
@@ -33,9 +39,10 @@ class KiroCliProvider(BaseProvider):
         self._agent_profile = agent_profile
         # Create dynamic prompt pattern based on agent profile (ANSI-free)
         # Matches: [agent] !> or [agent] > or [agent] X% > or [agent] λ > or [agent] X% λ >
-        # after ANSI codes are stripped
+        # after ANSI codes are stripped, with optional placeholder text at end
+        # e.g. "[it] > How can I help?" or "[it] > What would you like to do next?"
         self._idle_prompt_pattern = (
-            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*[\s\n]*$"
+            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*[^\n]*$"
         )
         self._permission_prompt_pattern = (
             r"Allow this action\?.*\[.*y.*\/.*n.*\/.*t.*\]:\s*" + self._idle_prompt_pattern

@@ -418,6 +418,106 @@ class TestKiroCliProviderHandoffScenarios:
         assert not message.endswith("\x1b")  # No trailing escape chars
 
 
+class TestKiroCliProviderPlaceholderText:
+    """Test placeholder text handling in idle prompts.
+
+    Kiro CLI displays greyed-out placeholder text after the prompt when idle,
+    e.g. '[it] > How can I help?' or '[it] > What would you like to do next?'
+    The placeholder uses ANSI color code 38;5;240 (grey).
+    """
+
+    @patch("cli_agent_orchestrator.providers.kiro_cli.tmux_client")
+    def test_idle_with_various_placeholder_texts(self, mock_tmux):
+        """Test IDLE status detection with various placeholder texts."""
+        placeholders = [
+            "How can I help?",
+            "What would you like to do next?",
+            "Ready for your next request",
+            "",  # Empty placeholder
+        ]
+
+        provider = KiroCliProvider("test1234", "test-session", "window-0", "developer")
+
+        for placeholder in placeholders:
+            if placeholder:
+                mock_tmux.get_history.return_value = (
+                    f"\x1b[38;5;6m[developer] \x1b[38;5;93m> \x1b[38;5;240m{placeholder}\x1b[39m"
+                )
+            else:
+                mock_tmux.get_history.return_value = (
+                    "\x1b[38;5;6m[developer] \x1b[38;5;93m> \x1b[39m"
+                )
+            status = provider.get_status()
+            assert status == TerminalStatus.IDLE, f"Failed for placeholder: '{placeholder}'"
+
+    def test_idle_prompt_pattern_with_placeholder(self):
+        """Test idle prompt pattern matches prompts with placeholder text (ANSI-cleaned)."""
+        provider = KiroCliProvider("test1234", "test-session", "window-0", "developer")
+
+        # Test with ANSI-cleaned input (as get_status does)
+        test_cases = [
+            "[developer] > How can I help?",
+            "[developer] > What would you like to do next?",
+            "[developer] > ",
+            "[developer]>",
+            "[developer] 45%> How can I help?",
+            "[developer] 100%λ> Ready",
+        ]
+
+        for test_input in test_cases:
+            assert re.search(
+                provider._idle_prompt_pattern, test_input
+            ), f"Pattern should match: '{test_input}'"
+
+    def test_idle_pattern_for_log_with_placeholder(self):
+        """Test IDLE_PROMPT_PATTERN_LOG matches raw ANSI output with placeholder text.
+
+        This pattern is used by inbox_service to detect idle state from log files.
+        It must match the raw ANSI escape sequences including 256-color codes.
+        Supports both old (38;5;13) and new (38;5;93) kiro-cli color codes.
+        """
+        from cli_agent_orchestrator.providers.kiro_cli import IDLE_PROMPT_PATTERN_LOG
+
+        # New kiro-cli output formats with 256-color code 93
+        new_format_cases = [
+            # With greyed-out placeholder text (38;5;240 = grey)
+            "\x1b[38;5;93m> \x1b[38;5;240mHow can I help?\x1b[39m",
+            "\x1b[38;5;93m> \x1b[38;5;240mWhat would you like to do next?\x1b[39m",
+            # Without placeholder text
+            "\x1b[38;5;93m> \x1b[39m",
+            "\x1b[38;5;93m>\x1b[39m",
+        ]
+
+        # Old kiro-cli output formats with 256-color code 13
+        old_format_cases = [
+            "\x1b[38;5;13m> \x1b[39m",
+            "\x1b[38;5;13m>\x1b[39m",
+            # Old format with placeholder (if it existed)
+            "\x1b[38;5;13m> \x1b[38;5;240mPlaceholder\x1b[39m",
+        ]
+
+        for test_input in new_format_cases + old_format_cases:
+            assert re.search(
+                IDLE_PROMPT_PATTERN_LOG, test_input
+            ), f"IDLE_PROMPT_PATTERN_LOG should match: {repr(test_input)}"
+
+    def test_idle_pattern_for_log_no_false_positives(self):
+        """Test IDLE_PROMPT_PATTERN_LOG doesn't match non-idle output."""
+        from cli_agent_orchestrator.providers.kiro_cli import IDLE_PROMPT_PATTERN_LOG
+
+        # Should NOT match these
+        non_idle_cases = [
+            "Processing your request...",
+            "\x1b[38;5;10m> \x1b[39mAgent response text",  # Green arrow (response indicator)
+            "Some random text with > in it",
+        ]
+
+        for test_input in non_idle_cases:
+            assert not re.search(
+                IDLE_PROMPT_PATTERN_LOG, test_input
+            ), f"IDLE_PROMPT_PATTERN_LOG should NOT match: {repr(test_input)}"
+
+
 class TestKiroCliProviderEdgeCases:
     """Test edge cases and error handling."""
 
